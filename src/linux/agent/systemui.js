@@ -1,7 +1,7 @@
 'use strict';
 
-var ApplicationInfo, RunningAppProcessInfo, RunningTaskInfo, GET_META_DATA;
-var context, packageManager, activityManager, Intent, ComponentName;
+var ApplicationInfo, ComponentName, Intent, RunningAppProcessInfo, RunningTaskInfo, GET_META_DATA;
+var context, packageManager, activityManager;
 
 rpc.exports = {
   enumerateApplications: function () {
@@ -40,7 +40,7 @@ rpc.exports = {
       try {
         return packageManager.getApplicationInfo(packageName, GET_META_DATA).processName.value;
       } catch (e) {
-        throw new Error("Unable to find application with identifier '" + packageName + "'");
+        throw new Error('Unable to find application with identifier \'' + packageName + '\'');
       }
     });
   },
@@ -48,7 +48,7 @@ rpc.exports = {
     return performOnJavaVM(function () {
       var launchIntent = packageManager.getLaunchIntentForPackage(packageName);
       if (launchIntent === null)
-        throw new Error("Unable to find application with identifier '" + packageName + "'");
+        throw new Error('Unable to find application with identifier \'' + packageName + '\'');
 
       if (activityName !== null)
         launchIntent.setClassName(packageName, activityName);
@@ -58,18 +58,17 @@ rpc.exports = {
   },
   broadcastAction: function (packageName, receiverName, action) {
     return performOnJavaVM(function () {
-
       if (receiverName === null)
-        throw new Error("Please provide receiver name for '"+ packageName + "'");
+        throw new Error('Please provide receiver name for \'' + packageName + '\'');
 
       if (action === null)
-        throw new Error("Please provide intent action for '" + packageName + "'");
+        throw new Error('Please provide intent action for \'' + packageName + '\'');
 
       var intent = Intent.$new();
       intent.setAction(action);
 
-      var cmp = ComponentName.$new(packageName, receiverName)
-      intent.setComponent(cmp);
+      var component = ComponentName.$new(packageName, receiverName)
+      intent.setComponent(component);
 
       context.sendBroadcast(intent);
     });
@@ -126,14 +125,14 @@ Java.perform(function () {
   var ActivityManager = Java.use('android.app.ActivityManager');
   var ActivityThread = Java.use('android.app.ActivityThread');
   ApplicationInfo = Java.use('android.content.pm.ApplicationInfo');
+  ComponentName = Java.use('android.content.ComponentName');
+  Intent = Java.use('android.content.Intent');
   var Context = Java.use('android.content.Context');
   var PackageManager = Java.use('android.content.pm.PackageManager');
   RunningAppProcessInfo = Java.use('android.app.ActivityManager$RunningAppProcessInfo');
   RunningTaskInfo = Java.use('android.app.ActivityManager$RunningTaskInfo');
   var ACTIVITY_SERVICE = Context.ACTIVITY_SERVICE.value;
   GET_META_DATA = PackageManager.GET_META_DATA.value;
-  Intent = Java.use('android.content.Intent');
-  ComponentName = Java.use('android.content.ComponentName');
 
   context = ActivityThread.currentApplication();
 

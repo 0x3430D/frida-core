@@ -197,22 +197,6 @@ namespace Frida {
 		public override async uint spawn (string program, HostSpawnOptions options) throws Error {
 #if ANDROID
 			if (!program.has_prefix ("/")) {
-
-				if (options.has_argv)
-					throw new Error.NOT_SUPPORTED ("The 'argv' option is not supported when spawning Android apps");
-
-				if (options.has_envp)
-					throw new Error.NOT_SUPPORTED ("The 'envp' option is not supported when spawning Android apps");
-
-				if (options.has_env)
-					throw new Error.NOT_SUPPORTED ("The 'env' option is not supported when spawning Android apps");
-
-				if (options.cwd.length > 0)
-					throw new Error.NOT_SUPPORTED ("The 'cwd' option is not supported when spawning Android apps");
-
-				if (options.stdio != INHERIT)
-					throw new Error.NOT_SUPPORTED ("Redirected stdio is not supported when spawning Android apps");
-
 				return yield get_robo_launcher ().spawn (program, options);
 			} else {
 				return yield helper.spawn (program, options);
@@ -335,6 +319,20 @@ namespace Frida {
 	}
 
 #if ANDROID
+	enum PackageEntrypoint {
+		ACTIVITY,
+		RECEIVER;
+
+		public string toString () {
+			string value = ((EnumClass)typeof (PackageEntrypoint).class_ref ()).get_value (this).value_name;
+
+			var tokens = value.split ("_"); 
+			var last = tokens.length - 1;
+
+			return tokens[last].down ();
+		}
+	}
+
 	private class RoboLauncher : Object {
 		public signal void spawn_added (HostSpawnInfo info);
 		public signal void spawn_removed (HostSpawnInfo info);
@@ -409,16 +407,38 @@ namespace Frida {
 		}
 
 		public async uint spawn (string program, HostSpawnOptions options) throws Error {
+			if (options.has_argv)
+				throw new Error.NOT_SUPPORTED ("The 'argv' option is not supported when spawning Android apps");
 
-			string package_name = program;
+			if (options.has_envp)
+				throw new Error.NOT_SUPPORTED ("The 'envp' option is not supported when spawning Android apps");
+
+			if (options.has_env)
+				throw new Error.NOT_SUPPORTED ("The 'env' option is not supported when spawning Android apps");
+
+			if (options.cwd.length > 0)
+				throw new Error.NOT_SUPPORTED ("The 'cwd' option is not supported when spawning Android apps");
+
+			if (options.stdio != INHERIT)
+				throw new Error.NOT_SUPPORTED ("Redirected stdio is not supported when spawning Android apps");
 
 			var aux_options = options.load_aux ();
 
-			string  method = "activity";
+			string package_name = program;
+			PackageEntrypoint entry_type = PackageEntrypoint.ACTIVITY;
 			string? entry_point = null;
-			if (aux_options.contains ("activity")) {
+			string? action = null;
 
+			if (aux_options.contains ("activity")) {
 				string? activity_name = null;
+
+				if (aux_options.contains ("receiver")) {
+					throw new Error.INVALID_ARGUMENT ("The 'receiver' and 'activity' options must not be mixed");
+				}
+
+				if (aux_options.contains ("action")) {
+					throw new Error.INVALID_ARGUMENT ("The 'action' option is not yet supported for activity");
+				}
 
 				if (!aux_options.lookup ("activity", "s", out activity_name))
 					throw new Error.INVALID_ARGUMENT ("The 'activity' option must be a string");
@@ -427,10 +447,15 @@ namespace Frida {
 					activity_name = package_name + activity_name;
 
 				entry_point = activity_name;
-			}
+				entry_type = PackageEntrypoint.ACTIVITY;
+			} 
+			
 			if (aux_options.contains ("receiver")) {
-
 				string? receiver_name = null;
+
+				if (aux_options.contains ("activity")) {
+					throw new Error.INVALID_ARGUMENT ("The 'receiver' and 'activity' options must not be mixed");
+				}
 
 				if (!aux_options.lookup ("receiver", "s", out receiver_name))
 					throw new Error.INVALID_ARGUMENT ("The 'receiver' option must be a string");
@@ -439,11 +464,13 @@ namespace Frida {
 					receiver_name = package_name + receiver_name;
 
 				entry_point = receiver_name;
-				method = "receiver";
-			}
-
-			string? action = null;
+				entry_type = PackageEntrypoint.RECEIVER;
+			} 
+			
 			if (aux_options.contains ("action")) {
+				if (!aux_options.contains ("receiver")) {
+					throw new Error.INVALID_ARGUMENT ("The 'action' option is not yet supported for " + entry_type.toString ());
+				}
 
 				if (!aux_options.lookup ("action", "s", out action))
 					throw new Error.INVALID_ARGUMENT ("The 'action' option must be a string");
@@ -460,7 +487,7 @@ namespace Frida {
 
 			try {
 				yield system_ui_agent.stop_package (package_name);
-				yield system_ui_agent.start_package (package_name, method, entry_point, action);
+				yield system_ui_agent.start_package (package_name, entry_type, entry_point, action);
 			} catch (Error e) {
 				spawn_requests.unset (process_name);
 				throw e;
@@ -650,12 +677,10 @@ namespace Frida {
 			return process_name.get_string ();
 		}
 
-		public async void start_package (string package_name, string method, string? entry_point, string? action) throws Error {
-
+		public async void start_package (string package_name, PackageEntrypoint entry_type, string? entry_point, string? action) throws Error {
 			var package_name_value = new Json.Node.alloc ().init_string (package_name);
 
-			if (method == "activity") {
-
+			if (entry_type == PackageEntrypoint.ACTIVITY) {
 				var activity_name_value = new Json.Node.alloc ();
 				if (entry_point != null)
 					activity_name_value.init_string (entry_point);
@@ -663,9 +688,7 @@ namespace Frida {
 					activity_name_value.init_null ();
 
 				yield call ("startActivity", new Json.Node[] { package_name_value, activity_name_value });
-			}
-			else if (method == "receiver") {
-
+			} else if (entry_type == PackageEntrypoint.RECEIVER) {
 				var receiver_name_value = new Json.Node.alloc ();
 				if (entry_point != null)
 					receiver_name_value.init_string (entry_point);
@@ -679,10 +702,8 @@ namespace Frida {
 					throw new Error.INVALID_ARGUMENT ("The action is mandatory for broadcast receiver");
 
 				yield call ("broadcastAction", new Json.Node[] { package_name_value, receiver_name_value, action_value });
-			}
-			else {
-
-				throw new Error.INVALID_ARGUMENT ("The provided method is unsupported");
+			} else {
+				throw new Error.INVALID_ARGUMENT ("The provided entry type is unsupported");
 			}
 		}
 
